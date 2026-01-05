@@ -270,7 +270,7 @@ int main(int argc, char *argv[]) {
     dense_total_time = t_end - t_start;
 
     if (rank == 0) {
-        printf("Dense total time (MPI): %f seconds\n", dense_total_time);
+        printf("Dense total time: %f seconds\n", dense_total_time);
     }
 
     // Free dynamically allocated memory
