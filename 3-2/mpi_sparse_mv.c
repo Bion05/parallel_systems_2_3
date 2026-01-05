@@ -177,6 +177,14 @@ int main(int argc, char *argv[]) {
     t_end = MPI_Wtime();
     send_time = t_end - t_start;
 
+
+    // Broadcast dense matrix to all for parallel dense matvec
+    if (rank != 0) {
+        dense_matrix = malloc(N * N * sizeof(int));
+    }
+    MPI_Bcast(dense_matrix, N * N, MPI_INT, 0, MPI_COMM_WORLD);
+
+
     // Calculate each process's assigned rows
     int rows_per_proc = N / size;
     int remainder = N % size;
@@ -237,26 +245,32 @@ int main(int argc, char *argv[]) {
     }
 
     // Dense matrix-vector multiplication
-    if (rank == 0) {
-        t_start = MPI_Wtime();
+    t_start = MPI_Wtime();
 
-        int *dense_result = malloc(N * sizeof(int));
-        int *dense_vec = malloc(N * sizeof(int));
-        for (int i = 0; i < N; i++) dense_vec[i] = vector[i];
+    for (int r = 0; r < repetitions; r++) {
+        // Each process computes dense matvec on its assigned rows
+        dense_matvec(dense_matrix, N, row_start, row_end, vector, local_result);
 
-        for (int r = 0; r < repetitions; r++) {
-            dense_matvec(dense_matrix, N, 0, N, dense_vec, dense_result);
-            for (int i = 0; i < N; i++) dense_vec[i] = dense_result[i];
+        // Gather partial results from all processes to root
+        MPI_Gatherv(local_result, local_rows, MPI_INT,
+                    result, recvcounts, displs, MPI_INT,
+                    0, MPI_COMM_WORLD);
+
+        // Broadcast updated vector to all for next iteration
+        MPI_Bcast(result, N, MPI_INT, 0, MPI_COMM_WORLD);
+
+        // Update local vector copy on root
+        if (rank == 0) {
+            for (int i = 0; i < N; i++)
+                vector[i] = result[i];
         }
+    }
 
-        t_end = MPI_Wtime();
-        dense_total_time = t_end - t_start;
+    t_end = MPI_Wtime();
+    dense_total_time = t_end - t_start;
 
-        printf("Dense total time: %f seconds\n", dense_total_time);
-
-        free(dense_result);
-        free(dense_vec);
-        free(dense_matrix);
+    if (rank == 0) {
+        printf("Dense total time (MPI): %f seconds\n", dense_total_time);
     }
 
     // Free dynamically allocated memory
@@ -266,6 +280,7 @@ int main(int argc, char *argv[]) {
     free(vector);
     free(result);
     free(local_result);
+    free(dense_matrix);
 
     if (rank == 0) {
         free(recvcounts);
