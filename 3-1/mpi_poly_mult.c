@@ -41,6 +41,7 @@ int main(int argc, char *argv[]){
 
     double t_total_start, t_total_end;
     double t_send = 0.0, t_compute = 0.0, t_recv = 0.0;
+    double local_compute;
 
     // Rank 0 initializes the input polynomials
     if(rank == 0){
@@ -51,6 +52,9 @@ int main(int argc, char *argv[]){
 
         rand_poly(A, n);
         rand_poly(B, n);
+    }else{
+        A = malloc((n + 1) * sizeof(int));
+        B = malloc((n + 1) * sizeof(int));
     }
 
     // Synchronize all processes before timing
@@ -58,21 +62,15 @@ int main(int argc, char *argv[]){
     t_total_start = MPI_Wtime();
     
     // Measure data distribution time
-    double t1 = MPI_Wtime();  
-
-    if(rank != 0){
-        A = malloc((n+1)*sizeof(int));
-        B = malloc((n+1)*sizeof(int));
-    }
+    if(rank == 0) t_send = -MPI_Wtime();
 
     // Broadcast polynomials A and B to all processes
     MPI_Bcast(A, n+1, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(B, n+1, MPI_INT, 0, MPI_COMM_WORLD);
 
-    t_send = MPI_Wtime() - t1;
+    if(rank == 0) t_send += MPI_Wtime();
 
     // Parallel computation phase
-    double t2 = MPI_Wtime();
     int coeffs_per_proc = result_size / size;
     int remainder = result_size % size;
 
@@ -81,6 +79,8 @@ int main(int argc, char *argv[]){
     int local_n = coeffs_per_proc + (rank < remainder ? 1 : 0);
 
     int *local_C = calloc(local_n, sizeof(int));
+
+    double t_comp_start = MPI_Wtime();
 
     // Compute assigned coefficients of the result polynomial
     for(int i = 0; i < local_n; i++){
@@ -95,11 +95,11 @@ int main(int argc, char *argv[]){
         local_C[i] = sum;
     }
 
-    t_compute = MPI_Wtime() - t2;
+    local_compute = MPI_Wtime() - t_comp_start;
+
+    MPI_Reduce(&local_compute, &t_compute, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 
     // Gather partial results at rank 0
-    double t3 = MPI_Wtime();
-
     int *recv_counts = NULL;
     int *displs = NULL;
 
@@ -112,13 +112,15 @@ int main(int argc, char *argv[]){
             displs[i] = offset;
             offset += recv_counts[i];
         }
+        t_recv = - MPI_Wtime();
     }
 
     MPI_Gatherv(local_C, local_n, MPI_INT, C, 
                 recv_counts, displs, MPI_INT, 
                 0, MPI_COMM_WORLD);
 
-    t_recv = MPI_Wtime() - t3;
+    if(rank == 0) t_recv += MPI_Wtime();
+
     t_total_end = MPI_Wtime();
 
     // Print timing results (only by rank 0)
